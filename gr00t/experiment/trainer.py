@@ -303,6 +303,28 @@ class Gr00tTrainer(Trainer):
         self.loss = loss
 
         # --------------------------------------------------------------
+        # Training-time RTC continuity metrics (when enabled). Mirrors openpi
+        # `train.py` which surfaces aux metrics from the model's compute_loss into
+        # the train info dict. We log all five scalars (mean delay, postfix MSE,
+        # boundary MSE, predicted boundary jump, true boundary jump) so the user
+        # can monitor the prefix->postfix join at the timestep cadence the
+        # existing accuracy logging uses.
+        # --------------------------------------------------------------
+        if self.state.global_step % self.args.logging_steps == 0 and model.training:
+            rtc_metrics = None
+            if isinstance(outputs, dict):
+                rtc_metrics = outputs.get("rtc_metrics")
+            else:
+                rtc_metrics = getattr(outputs, "rtc_metrics", None)
+            if rtc_metrics:
+                gathered = {}
+                for k, v in rtc_metrics.items():
+                    v_local = v.detach().to(loss.device)
+                    gathered[f"train/{k}"] = self._nested_gather(v_local).mean().item()
+                if self.args.local_rank in (-1, 0):
+                    self.log(gathered)
+
+        # --------------------------------------------------------------
         # Accuracy calculation
         # --------------------------------------------------------------
         if (

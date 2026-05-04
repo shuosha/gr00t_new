@@ -50,10 +50,18 @@ class TimestepEncoder(nn.Module):
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
 
     def forward(self, timesteps):
+        # Accepts either a 1-D [B] timestep (legacy: one scalar per batch element) or a
+        # 2-D [B, T] timestep (training-time RTC: per-token tau). diffusers' `Timesteps`
+        # asserts a 1-D input, so we flatten/reshape around it for the per-token case.
         dtype = next(self.parameters()).dtype
-        timesteps_proj = self.time_proj(timesteps).to(dtype)
-        timesteps_emb = self.timestep_embedder(timesteps_proj)  # (N, D)
-        return timesteps_emb
+        if timesteps.dim() == 2:
+            B, T = timesteps.shape
+            flat = timesteps.reshape(-1)
+            proj = self.time_proj(flat).to(dtype)
+            emb = self.timestep_embedder(proj)  # [B*T, D]
+            return emb.reshape(B, T, -1)
+        proj = self.time_proj(timesteps).to(dtype)
+        return self.timestep_embedder(proj)  # [B, D]
 
 
 class AdaLayerNorm(nn.Module):
@@ -76,9 +84,16 @@ class AdaLayerNorm(nn.Module):
         x: torch.Tensor,
         temb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        # `temb` is either [B, D] (legacy: per-batch scalar tau, broadcast across all
+        # tokens) or [B, T, D] (training-time RTC: per-token tau). When 3-D, we skip the
+        # extra `[:, None]` broadcast so each token gets its own modulation.
         temb = self.linear(self.silu(temb))
-        scale, shift = temb.chunk(2, dim=1)
-        x = self.norm(x) * (1 + scale[:, None]) + shift[:, None]
+        if temb.dim() == 2:
+            scale, shift = temb.chunk(2, dim=1)
+            x = self.norm(x) * (1 + scale[:, None]) + shift[:, None]
+        else:
+            scale, shift = temb.chunk(2, dim=-1)
+            x = self.norm(x) * (1 + scale) + shift
         return x
 
 
@@ -313,8 +328,13 @@ class DiT(ModelMixin, ConfigMixin):
 
         # Output processing
         conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=1)
-        hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
+        proj = self.proj_out_1(F.silu(conditioning))
+        if proj.dim() == 2:
+            shift, scale = proj.chunk(2, dim=1)
+            hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
+        else:
+            shift, scale = proj.chunk(2, dim=-1)
+            hidden_states = self.norm_out(hidden_states) * (1 + scale) + shift
         if return_all_hidden_states:
             return self.proj_out_2(hidden_states), all_hidden_states
         else:
@@ -391,8 +411,13 @@ class AlternateVLDiT(DiT):
 
         # Output processing
         conditioning = temb
-        shift, scale = self.proj_out_1(F.silu(conditioning)).chunk(2, dim=1)
-        hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
+        proj = self.proj_out_1(F.silu(conditioning))
+        if proj.dim() == 2:
+            shift, scale = proj.chunk(2, dim=1)
+            hidden_states = self.norm_out(hidden_states) * (1 + scale[:, None]) + shift[:, None]
+        else:
+            shift, scale = proj.chunk(2, dim=-1)
+            hidden_states = self.norm_out(hidden_states) * (1 + scale) + shift
         if return_all_hidden_states:
             return self.proj_out_2(hidden_states), all_hidden_states
         else:

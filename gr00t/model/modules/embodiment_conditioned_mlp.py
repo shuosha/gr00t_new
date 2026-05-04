@@ -177,22 +177,25 @@ class MultiEmbodimentActionEncoder(nn.Module):
         """
         Args:
             actions: [B, T, action_dim] action tensor
-            timesteps: [B,] timesteps - a single scalar per batch item
+            timesteps: [B,] (one scalar tau per batch item) or [B, T] (per-token tau,
+                e.g. for training-time RTC where prefix slots have tau=1.0 and postfix
+                slots share the sampled tau).
             cat_ids: [B,] category/embodiment IDs
         Returns:
             [B, T, hidden_size] encoded action features
         """
         B, T, _ = actions.shape
 
-        # 1) Expand each batch's single scalar time 'tau' across all T steps
-        #    so that shape => (B, T)
-        #    e.g. if timesteps is (B,), replicate across T
+        # 1) Normalize timesteps to (B, T). For per-batch scalars, replicate across T;
+        #    for per-token (B, T) tensors, pass through.
         if timesteps.dim() == 1 and timesteps.shape[0] == B:
-            # shape (B,) => (B,T)
             timesteps = timesteps.unsqueeze(1).expand(-1, T)
+        elif timesteps.dim() == 2 and tuple(timesteps.shape) == (B, T):
+            pass
         else:
             raise ValueError(
-                "Expected `timesteps` to have shape (B,) so we can replicate across T."
+                f"Expected `timesteps` shape (B,) or (B, T)=({B}, {T}), got "
+                f"{tuple(timesteps.shape)}"
             )
 
         # 2) Standard action MLP step for shape => (B, T, w)

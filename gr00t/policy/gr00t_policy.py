@@ -317,7 +317,16 @@ class Gr00tPolicy(BasePolicy):
 
         Args:
             observation: Batched observation dictionary
-            options: Optional parameters (currently unused)
+            options: Optional parameters. Recognized keys for training-time RTC inference
+                (mirrors openpi `Policy.infer(prev_action_chunk=..., inference_delay=...)`):
+                  - "prev_action_chunk": np.ndarray of shape (action_horizon, action_dim)
+                    or (B, action_horizon, action_dim). The first `inference_delay` slots
+                    are clamped to this chunk during sampling; the model only generates
+                    the postfix.
+                  - "inference_delay": int, the number of action slots in
+                    `prev_action_chunk` that overlap with the new chunk during the
+                    inference latency window. Must be set together with
+                    `prev_action_chunk`. Defaults to 0 (plain sampling).
 
         Returns:
             Tuple of (actions_dict, info_dict)
@@ -338,9 +347,33 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = self.collate_fn(processed_inputs)
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
+        # Step 4a: Translate RTC inference kwargs (training-time RTC). Mirrors openpi
+        # `Policy.infer` which accepts `prev_action_chunk` / `inference_delay` and stuffs
+        # them into the model's sample kwargs.
+        forwarded_options: dict[str, Any] | None = None
+        if options is not None and (
+            options.get("prev_action_chunk") is not None
+            or options.get("inference_delay", 0) != 0
+        ):
+            prev = options.get("prev_action_chunk")
+            if prev is None:
+                raise ValueError(
+                    "inference_delay was set but prev_action_chunk is None; both must be "
+                    "passed together for training-time RTC inference."
+                )
+            prev_t = torch.as_tensor(
+                np.asarray(prev), device=self.model.device, dtype=torch.bfloat16
+            )
+            if prev_t.dim() == 2:
+                prev_t = prev_t[None, ...]  # (H, D) -> (1, H, D)
+            forwarded_options = {
+                "prev_action_chunk": prev_t,
+                "inference_delay": int(options.get("inference_delay", 0)),
+            }
+
         # Step 4: Run model inference to predict actions
         with torch.inference_mode():
-            model_pred = self.model.get_action(**collated_inputs)
+            model_pred = self.model.get_action(**collated_inputs, options=forwarded_options)
         normalized_action = model_pred["action_pred"].float()
 
         # Step 5: Decode actions from normalized space back to physical units

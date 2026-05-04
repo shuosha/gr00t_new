@@ -91,6 +91,13 @@ class Gr00tN1d6Config(PretrainedConfig):
     noise_s: float = 0.999
     num_timestep_buckets: int = 1000
 
+    # Training-time RTC: when set, training samples a per-example delay
+    # d ~ Unif{0, ..., rtc_max_delay}, fixes the first d action slots to clean ground-truth
+    # (per-token t=1 in gr00t's convention), and masks loss to the postfix.
+    # Inference is unaffected by this field; get_action takes prev_action_chunk / inference_delay
+    # through the options dict.
+    rtc_max_delay: int | None = None
+
     # Training parameters
     tune_projector: bool = True
     tune_diffusion_model: bool = True
@@ -121,6 +128,17 @@ class Gr00tN1d6Config(PretrainedConfig):
                     setattr(self, f.name, f.default)
                 elif getattr(f, "default_factory", MISSING) is not MISSING:
                     setattr(self, f.name, f.default_factory())
+
+        if self.rtc_max_delay is not None:
+            if self.rtc_max_delay < 0:
+                raise ValueError(
+                    f"rtc_max_delay must be non-negative, got {self.rtc_max_delay}"
+                )
+            if self.rtc_max_delay > self.action_horizon:
+                raise ValueError(
+                    f"rtc_max_delay ({self.rtc_max_delay}) must be <= "
+                    f"action_horizon ({self.action_horizon})"
+                )
 
     def to_filtered_dict(self, exclude_augment: bool = True) -> dict:
         """Return a dictionary representation of this config, optionally excluding augmentation keys."""

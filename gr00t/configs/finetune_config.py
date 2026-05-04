@@ -49,6 +49,14 @@ class FinetuneConfig:
     Dropout probability applied to state inputs for regularization during training.
     """
 
+    rtc_max_delay: int | None = None
+    """
+    If set, enables training-time Real-Time Chunking (RTC). Samples a per-example delay
+    d ~ Unif{0..rtc_max_delay} and trains the model to predict the postfix conditioned on
+    a clean ground-truth prefix of length d. Paper recommends 10 for a 50Hz controller
+    (covers ~200ms latency). Leave as None for standard (non-RTC) training.
+    """
+
     # --- Data Augmentation ---
     random_rotation_angle: int | None = None
     """Maximum rotation angle (in degrees) for random rotation augmentation of input images."""
