@@ -298,6 +298,7 @@ class Gr00tN1d6ActionHead(nn.Module):
                 t_per_tok=t_per_tok,
                 prefix_mask=prefix_action_mask,
                 delay=delay,
+                action_mask=action_mask,
             )
         else:
             rtc_metrics = {}
@@ -321,6 +322,7 @@ class Gr00tN1d6ActionHead(nn.Module):
         t_per_tok: torch.Tensor,
         prefix_mask: torch.Tensor,
         delay: torch.Tensor,
+        action_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Continuity metrics measured at the prefix-postfix boundary (log-only).
 
@@ -353,7 +355,11 @@ class Gr00tN1d6ActionHead(nn.Module):
         # Predicted clean action at every slot. At prefix slots (t_per_tok=1) this
         # collapses to x_t = actions exactly (clamped GT), so x_hat there is trivial.
         x_hat = x_t + (1.0 - t_per_tok)[..., None] * v_pred  # [B, H, A]
-        clean_se = ((x_hat - actions) ** 2).mean(dim=-1)  # [B, H]
+        # Mask out padded action dims (e.g. ALOHA uses 14 of max_action_dim=29) so that
+        # unconstrained model outputs on padded dims don't pollute MSE / L2 jump.
+        amask = action_mask.to(x_hat.dtype)  # [B, H, A] in {0, 1}
+        per_tok_dim_count = amask.sum(dim=-1).clamp_min(1.0)  # [B, H]
+        clean_se = (((x_hat - actions) * amask) ** 2).sum(dim=-1) / per_tok_dim_count  # [B, H]
 
         postfix = (~prefix_mask).to(clean_se.dtype)  # [B, H]
         postfix_count_total = postfix.sum().clamp_min(1.0)
@@ -367,9 +373,10 @@ class Gr00tN1d6ActionHead(nn.Module):
         # Boundary jump magnitude: only meaningful when 1 <= d < H.
         jump_valid = ((delay >= 1) & (delay < H)).to(clean_se.dtype)  # [B]
         prev = (d_clamped - 1).clamp_min(0)
-        x_hat_at_d = x_hat[bidx, d_clamped]  # [B, A]
-        a_at_prev = actions[bidx, prev]  # [B, A]
-        a_at_d = actions[bidx, d_clamped]  # [B, A]
+        amask_at_d = amask[bidx, d_clamped]  # [B, A] — assume same active dims at d-1
+        x_hat_at_d = x_hat[bidx, d_clamped] * amask_at_d
+        a_at_prev = actions[bidx, prev] * amask_at_d
+        a_at_d = actions[bidx, d_clamped] * amask_at_d
         pred_jump = (x_hat_at_d - a_at_prev).norm(dim=-1)
         true_jump = (a_at_d - a_at_prev).norm(dim=-1)
         jw = jump_valid.sum().clamp_min(1.0)
