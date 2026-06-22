@@ -13,8 +13,8 @@ custom_aloha_config = {
     "video": ModalityConfig(
         delta_indices=[0],
         modality_keys=[
-            "top_camera",
-            "left_wrist_camera",
+            "top",
+            "left_wrist",
         ],
     ),
     "state": ModalityConfig(
