@@ -1,5 +1,5 @@
-DATASET_REPO=shashuo0104/260428_aloha_cube_handover_80Hz_v2
-DATASET_LOCAL=./data/260428_aloha_cube_handover_80Hz_v2
+DATASET_REPO=shashuo0104/260617_aloha_pipe_insert_80Hz_v1
+DATASET_LOCAL=./data/260617_aloha_pipe_insert_80Hz_v1
 
 # Download dataset from HuggingFace if not already present
 if [ ! -d "$DATASET_LOCAL" ]; then
@@ -15,9 +15,9 @@ CUDA_VISIBLE_DEVICES=0 python \
     --base-model-path nvidia/GR00T-N1.6-3B \
     --dataset-path $DATASET_LOCAL \
     --embodiment-tag NEW_EMBODIMENT \
-    --modality-config-path examples/ALOHA/custom_aloha_config.py \
+    --modality-config-path examples/ALOHA/scenix_aloha_single_arm_config.py \
     --num-gpus $NUM_GPUS \
-    --output-dir checkpoints/260423_gr00t_aloha_cube_handover_rtc12_80Hz_v5 \
+    --output-dir checkpoints/260617_gr00t_aloha_pipe_insert_rtc12_80Hz_v1 \
     --save-total-limit 5 \
     --save-steps 2000 \
     --max-steps 50000 \
