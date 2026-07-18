@@ -187,3 +187,81 @@ class TestActionHeadTrainableParams:
         head.set_trainable_parameters(True, False, True)
         for p in head.model.parameters():
             assert not p.requires_grad
+
+
+class TestActionHeadRTC:
+    """Test RTC (real-time chunking) inpainting in the denoising loop.
+
+    RTC activates when "action" is present in action_input at get_action time:
+    the first rtc_overlap_steps rows are seeded from the previous chunk, rows
+    [0, rtc_frozen_steps) get vel_strength=0 (hard-frozen), and rows
+    [rtc_frozen_steps, rtc_overlap_steps) get a ramped partial denoise.
+    """
+
+    @staticmethod
+    def _rtc_options(config, frozen, overlap=None, ramp_rate=5.0):
+        return {
+            "action_horizon": config.action_horizon,
+            "rtc_overlap_steps": overlap if overlap is not None else frozen,
+            "rtc_frozen_steps": frozen,
+            "rtc_ramp_rate": ramp_rate,
+        }
+
+    def test_frozen_rows_equal_seed(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)
+        prev_chunk = action_input["action"].clone()
+        frozen = 2
+        out = head.get_action(
+            _make_backbone_output(config),
+            action_input,
+            options=self._rtc_options(config, frozen=frozen),
+        )
+        # Seed for new rows [0, overlap) is the LAST `overlap` rows of the valid
+        # horizon of the input chunk; frozen rows never receive velocity updates.
+        expected = prev_chunk[:, config.action_horizon - frozen : config.action_horizon]
+        torch.testing.assert_close(out["action_pred"][:, :frozen], expected)
+
+    def test_overlap_equals_frozen_empty_ramp(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)
+        out = head.get_action(
+            _make_backbone_output(config),
+            action_input,
+            options=self._rtc_options(config, frozen=2, overlap=2),
+        )
+        assert torch.isfinite(out["action_pred"]).all()
+
+    def test_ramp_region_partially_denoised(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)
+        prev_chunk = action_input["action"].clone()
+        frozen, overlap = 1, 3
+        out = head.get_action(
+            _make_backbone_output(config),
+            action_input,
+            options=self._rtc_options(config, frozen=frozen, overlap=overlap),
+        )
+        pred = out["action_pred"]
+        seed = prev_chunk[:, config.action_horizon - overlap : config.action_horizon]
+        torch.testing.assert_close(pred[:, :frozen], seed[:, :frozen])
+        # Ramp rows start from the seed but receive nonzero velocity updates.
+        assert not torch.allclose(pred[:, frozen:overlap], seed[:, frozen:overlap])
+        assert torch.isfinite(pred).all()
+
+    def test_missing_options_raises(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)  # contains "action" -> RTC path
+        with pytest.raises(AssertionError):
+            head.get_action(_make_backbone_output(config), action_input, options=None)
+        incomplete = self._rtc_options(config, frozen=2)
+        del incomplete["rtc_ramp_rate"]
+        with pytest.raises(AssertionError):
+            head.get_action(_make_backbone_output(config), action_input, options=incomplete)
+
+    def test_no_rtc_without_action_key(self, action_head):
+        head, config = action_head
+        action_input = _make_action_input(config)
+        del action_input["action"]
+        out = head.get_action(_make_backbone_output(config), action_input, options=None)
+        assert out["action_pred"].shape == (2, config.action_horizon, config.max_action_dim)

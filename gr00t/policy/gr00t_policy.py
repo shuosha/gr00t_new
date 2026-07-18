@@ -382,7 +382,23 @@ class Gr00tPolicy(BasePolicy):
 
         Args:
             observation: Batched observation dictionary
-            options: Optional parameters (currently unused)
+            options: Optional RTC (real-time chunking) parameters. When
+                ``prev_action_chunk`` is set, the model inpaints the new chunk against
+                the previous one instead of sampling from pure noise:
+                - prev_action_chunk: previous action chunk in the model's NORMALIZED
+                  action space, zero-padded to ``max_action_dim``; shape
+                  ``(H, max_action_dim)`` or ``(B, H, max_action_dim)``. Its last
+                  ``rtc_overlap_steps`` rows within ``action_horizon`` align with the
+                  first ``rtc_overlap_steps`` steps of the new chunk.
+                - rtc_frozen_steps: steps hard-frozen to the previous chunk
+                  (policy inference latency). Required with ``prev_action_chunk``.
+                - rtc_overlap_steps: total steps constrained by the previous chunk
+                  (>= rtc_frozen_steps; steps in between get a ramped partial
+                  denoise). Defaults to ``rtc_frozen_steps``.
+                - rtc_ramp_rate: exponential ramp rate for the partial-denoise
+                  region. Defaults to 5.0.
+                - action_horizon: valid (unpadded) horizon of ``prev_action_chunk``.
+                  Defaults to this embodiment's action horizon.
 
         Returns:
             Tuple of (actions_dict, info_dict)
@@ -403,9 +419,29 @@ class Gr00tPolicy(BasePolicy):
         collated_inputs = self.collate_fn(processed_inputs)
         collated_inputs = _rec_to_dtype(collated_inputs, dtype=torch.bfloat16)
 
+        # Step 3b: RTC prefix injection. The action head switches to inpainting when
+        # "action" is present in its input; prepare_input() passes the batch through
+        # verbatim and handles device/dtype placement.
+        forwarded_options = None
+        if options is not None and options.get("prev_action_chunk") is not None:
+            if "rtc_frozen_steps" not in options:
+                raise ValueError("prev_action_chunk requires rtc_frozen_steps in options")
+            prev = torch.as_tensor(np.asarray(options["prev_action_chunk"], dtype=np.float32))
+            if prev.ndim == 2:
+                prev = prev.unsqueeze(0)  # (H, max_action_dim) -> (1, H, max_action_dim)
+            collated_inputs["inputs"]["action"] = prev
+            frozen = int(options["rtc_frozen_steps"])
+            h_valid = len(self.modality_configs["action"].delta_indices)
+            forwarded_options = {
+                "action_horizon": int(options.get("action_horizon", h_valid)),
+                "rtc_overlap_steps": int(options.get("rtc_overlap_steps", frozen)),
+                "rtc_frozen_steps": frozen,
+                "rtc_ramp_rate": float(options.get("rtc_ramp_rate", 5.0)),
+            }
+
         # Step 4: Run model inference to predict actions
         with torch.inference_mode():
-            model_pred = self.model.get_action(**collated_inputs)
+            model_pred = self.model.get_action(**collated_inputs, options=forwarded_options)
         normalized_action = model_pred["action_pred"].float()
 
         # Step 5: Decode actions from normalized space back to physical units
