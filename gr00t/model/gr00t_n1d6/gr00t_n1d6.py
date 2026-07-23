@@ -81,6 +81,8 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         # State noise parameters
         self.state_additive_noise_scale = config.state_additive_noise_scale
+        # Additive Gaussian noise on the raw normalized state vector, before the state encoder.
+        self.state_input_noise_scale = getattr(config, "state_input_noise_scale", 0.0)
 
         self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
         self.num_timestep_buckets = config.num_timestep_buckets
@@ -177,7 +179,11 @@ class Gr00tN1d6ActionHead(nn.Module):
         embodiment_id = action_input.embodiment_id
 
         # Embed state.
-        state_features = self.state_encoder(action_input.state, embodiment_id)
+        state = action_input.state
+        # Add Gaussian noise to the raw normalized state vector (before the encoder).
+        if self.training and self.state_input_noise_scale > 0:
+            state = state + torch.randn_like(state) * self.state_input_noise_scale
+        state_features = self.state_encoder(state, embodiment_id)
 
         # Dropout state features.
         if self.state_dropout_prob > 0:

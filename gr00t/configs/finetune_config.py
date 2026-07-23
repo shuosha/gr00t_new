@@ -74,6 +74,26 @@ class FinetuneConfig:
 
     If None, applying the default color jitter augmentation from the pretrained model.
     """
+    color_jitter_p: float = 1.0
+    """
+    Probability of applying color jitter augmentation to images (magnitude is still sampled
+    per application). 1.0 = always applied (previous behavior). Set e.g. 0.5 to keep some
+    un-augmented samples in the training distribution.
+    """
+
+    geometric_p: float = 1.0
+    """
+    Shared probability of applying the geometric augmentation block (random rotation + random
+    crop) to images, so a sample gets both geometric augmentations or neither. 1.0 = always
+    applied (previous behavior). Set e.g. 0.5 to keep some un-augmented samples.
+    """
+
+    state_input_noise_scale: float = 0.0
+    """
+    Scale of additive Gaussian noise applied to the raw normalized state vector before the state
+    encoder during training. 0.0 disables it. Mirrors openpi's state_noise_std.
+    """
+
     extra_augmentation_config: str | None = None
     """
     JSON string for extra image augmentations (mask-based and others).

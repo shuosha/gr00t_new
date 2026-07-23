@@ -63,6 +63,9 @@ if __name__ == "__main__":
     config.model.rtc_max_delay = ft_config.rtc_max_delay
     config.model.random_rotation_angle = ft_config.random_rotation_angle
     config.model.color_jitter_params = ft_config.color_jitter_params
+    config.model.color_jitter_p = ft_config.color_jitter_p
+    config.model.geometric_p = ft_config.geometric_p
+    config.model.state_input_noise_scale = ft_config.state_input_noise_scale
     if ft_config.extra_augmentation_config:
         config.model.extra_augmentation_config = json.loads(ft_config.extra_augmentation_config)
     else:

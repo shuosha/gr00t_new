@@ -24,5 +24,9 @@ CUDA_VISIBLE_DEVICES=0 python \
     --use-wandb \
     --global-batch-size 32 \
     --color-jitter-params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08 \
+    --color-jitter-p 0.5 \
+    --random-rotation-angle 5 \
+    --geometric-p 0.5 \
+    --state-input-noise-scale 0.01 \
     --dataloader-num-workers 4 \
     --rtc-max-delay 12

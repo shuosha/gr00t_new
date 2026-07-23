@@ -358,6 +358,8 @@ def build_image_transformations_albumentations(
     shortest_image_edge,
     crop_fraction,
     extra_augmentation_config: dict | None = None,
+    color_jitter_p: float = 1.0,
+    geometric_p: float = 1.0,
 ):
     """
     Build albumentations-based image transformations equivalent to the torchvision version.
@@ -369,6 +371,11 @@ def build_image_transformations_albumentations(
         color_jitter_params: Dictionary with color jitter parameters (brightness, contrast, saturation, hue)
         shortest_image_edge: Shortest edge size for resizing
         crop_fraction: Fraction of image to crop
+        color_jitter_p: Probability of applying the color jitter transform (magnitude still
+            sampled per-application). 1.0 = always applied. Default 1.0 for backward compat.
+        geometric_p: Shared probability of applying the geometric block (rotation + random crop),
+            so a sample either gets both geometric augmentations or neither. 1.0 = always applied.
+            Default 1.0 for backward compat.
         extra_augmentation_config: Optional dict for additional augmentations. Supported keys:
             - "background_noise_transforms": list of dicts, each with:
                 - "target_mask_values": list of int (e.g., [0])
@@ -396,15 +403,36 @@ def build_image_transformations_albumentations(
 
     # Training transforms (using ReplayCompose for consistent augmentation across views)
     # Use SmallestMaxSize to preserve aspect ratios, with INTER_AREA for antialiasing
+    #
+    # Geometric augmentations are ordered rotate -> crop -> resize: rotating first and then
+    # cropping the interior trims away the rotation border wedge, and lets crop + rotate share a
+    # single probability gate (geometric_p) so a sample gets both geometric augs or neither.
     train_transform_list = [
         LetterBoxPad(),
         A.SmallestMaxSize(max_size=max_size, interpolation=cv2.INTER_AREA),
-        FractionalRandomCrop(crop_fraction=fraction_to_use),
-        A.SmallestMaxSize(max_size=max_size, interpolation=cv2.INTER_AREA),
     ]
 
+    # Build the geometric block (rotate then crop) behind a single shared gate.
+    geometric_block = []
     if random_rotation_angle is not None and random_rotation_angle != 0:
-        train_transform_list.append(A.Rotate(limit=random_rotation_angle, p=1.0))
+        # Reflect the border instead of filling with black so the rotated corners stay
+        # photometrically plausible. The subsequent crop trims most of the border region anyway.
+        geometric_block.append(
+            A.Rotate(
+                limit=random_rotation_angle,
+                border_mode=cv2.BORDER_REFLECT_101,
+                p=1.0,
+            )
+        )
+    geometric_block.append(FractionalRandomCrop(crop_fraction=fraction_to_use, p=1.0))
+
+    if geometric_block:
+        # Nested Compose with p=geometric_p acts as a single shared gate over the whole block.
+        train_transform_list.append(A.Compose(geometric_block, p=geometric_p))
+
+    train_transform_list.append(
+        A.SmallestMaxSize(max_size=max_size, interpolation=cv2.INTER_AREA)
+    )
 
     if color_jitter_params is not None:
         # Map torchvision ColorJitter parameters to albumentations ColorJitter
@@ -415,7 +443,7 @@ def build_image_transformations_albumentations(
                 contrast=color_jitter_params.get("contrast", 0.0),
                 saturation=color_jitter_params.get("saturation", 0.0),
                 hue=color_jitter_params.get("hue", 0.0),
-                p=1.0,
+                p=color_jitter_p,
             )
         )
 

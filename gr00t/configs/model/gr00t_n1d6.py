@@ -44,6 +44,12 @@ class Gr00tN1d6Config(PretrainedConfig):
 
     random_rotation_angle: int | None = None
     color_jitter_params: dict[str, float] | None = None
+    # Probability gates for image augmentation. 1.0 = always applied (magnitude still sampled),
+    # matching the previous always-on behavior. Lower (e.g. 0.5) keeps some un-augmented samples.
+    # color_jitter_p gates the color jitter; geometric_p is a single shared gate over the
+    # geometric block (rotation + random crop) so a sample gets both geometric augs or neither.
+    color_jitter_p: float = 1.0
+    geometric_p: float = 1.0
     use_albumentations_transforms: bool = True
     # Extra augmentation config (mask-based and others).
     extra_augmentation_config: dict | None = None
@@ -106,6 +112,10 @@ class Gr00tN1d6Config(PretrainedConfig):
     # State Augmentation parameters
     state_dropout_prob: float = 0.0  # State dropout probability
     state_additive_noise_scale: float = 0.0  # Scale for additive Gaussian noise on state features
+    # Scale for additive Gaussian noise on the *raw normalized state vector* (before the state
+    # encoder). Distinct from state_additive_noise_scale, which noises post-encoder features.
+    # 0.0 disables it. Mirrors openpi's state_noise_std (noise on normalized state pre-encoder).
+    state_input_noise_scale: float = 0.0
 
     # Multi-embodiment parameters
     max_num_embodiments: int = 32
@@ -151,6 +161,8 @@ class Gr00tN1d6Config(PretrainedConfig):
             exclude_keys = {
                 "random_rotation_angle",
                 "color_jitter_params",
+                "color_jitter_p",
+                "geometric_p",
                 "use_albumentations_transforms",
                 "formalize_language",
                 "image_crop_size",

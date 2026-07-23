@@ -120,6 +120,8 @@ class Gr00tN1d6Processor(BaseProcessor):
         crop_fraction: float = 0.95,
         random_rotation_angle: int | None = None,
         color_jitter_params: dict[str, float] | None = None,
+        color_jitter_p: float = 1.0,
+        geometric_p: float = 1.0,
         formalize_language: bool = True,
         model_name: str = "nvidia/Eagle-Block2A-2B-v2",
         model_type: Literal["eagle"] = "eagle",
@@ -166,6 +168,8 @@ class Gr00tN1d6Processor(BaseProcessor):
         self.image_target_size = image_target_size
         self.random_rotation_angle = random_rotation_angle
         self.color_jitter_params = color_jitter_params
+        self.color_jitter_p = color_jitter_p
+        self.geometric_p = geometric_p
         self.processor = build_processor(model_name, transformers_loading_kwargs)
         # Set padding side to 'left' for Flash Attention compatibility
         self.processor.tokenizer.padding_side = "left"
@@ -189,6 +193,8 @@ class Gr00tN1d6Processor(BaseProcessor):
                     shortest_image_edge,
                     crop_fraction,
                     extra_augmentation_config=self.extra_augmentation_config,
+                    color_jitter_p=color_jitter_p,
+                    geometric_p=geometric_p,
                 )
             )
         else:
@@ -462,6 +468,8 @@ class Gr00tN1d6Processor(BaseProcessor):
                 "use_albumentations": self.use_albumentations,
                 "random_rotation_angle": self.random_rotation_angle,
                 "color_jitter_params": self.color_jitter_params,
+                "color_jitter_p": self.color_jitter_p,
+                "geometric_p": self.geometric_p,
                 "shortest_image_edge": self.shortest_image_edge,
                 "crop_fraction": self.crop_fraction,
                 # VLM settings
@@ -527,6 +535,8 @@ class Gr00tN1d6Processor(BaseProcessor):
             override_keys = [
                 "random_rotation_angle",
                 "color_jitter_params",
+                "color_jitter_p",
+                "geometric_p",
                 "use_relative_action",
                 "extra_augmentation_config",
             ]
